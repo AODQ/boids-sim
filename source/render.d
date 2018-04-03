@@ -40,25 +40,37 @@ void Initialize () {
     glGetUniformLocation(program_id, "u_texture_1"),
     glGetUniformLocation(program_id, "u_texture_2"),
   ];
+  // set uniform textures
+  glActiveTexture(GL_TEXTURE0); glUniform1f(0, 0);
+  glActiveTexture(GL_TEXTURE1); glUniform1f(1, 1);
+  glActiveTexture(GL_TEXTURE2); glUniform1f(2, 2);
   // load textures;
   textures.length = 3;
   glGenTextures(3, textures.ptr);
+
   glBindTexture(GL_TEXTURE_2D, textures[0]);
+  glActiveTexture(0);
   auto texture_0 = read_png("textures/texture_0.png");
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1024, 1024, 0, GL_RGBA,
                               GL_UNSIGNED_BYTE, texture_0.pixels.ptr);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
   auto texture_1 = read_png("textures/texture_1.png");
+  glActiveTexture(1);
+  glBindTexture(GL_TEXTURE_2D, textures[1]);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1024, 1024, 0, GL_RGBA,
                               GL_UNSIGNED_BYTE, texture_1.pixels.ptr);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
   auto texture_2 = read_png("textures/texture_2.png");
+  glActiveTexture(2);
+  glBindTexture(GL_TEXTURE_2D, textures[2]);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1024, 1024, 0, GL_RGBA,
                               GL_UNSIGNED_BYTE, texture_2.pixels.ptr);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 }
 
 string vertex = q{#version 330 core
@@ -89,9 +101,15 @@ void Render ( float glfw_time ) {
   glBindBuffer(GL_ARRAY_BUFFER, screen_vbo);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, null);
   // uniforms
-  glUniform1f(textures_uloc[0], textures[0]);
-  glUniform1f(textures_uloc[1], textures[1]);
-  glUniform1f(textures_uloc[2], textures[2]);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, textures[0]);
+  glUniform1i(0, 0);
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_2D, textures[1]);
+  glUniform1i(1, 1);
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_2D, textures[2]);
+  glUniform1i(2, 2);
   glUniform1f(time_uloc, glfw_time);
   glUniform1f(cam_range_uloc, boidsim.cam_range);
   glUniform3fv(boid_ori_uloc, 3*boidsim.Boid_amt, boid_ori_data.ptr);
@@ -106,6 +124,7 @@ void Render ( float glfw_time ) {
 //---- frag -------------------------------------------------------------------
 //-----------------------------------------------------------------------------
 string fragment = q{#version 330 core
+#extension GL_ARB_explicit_uniform_location : enable
 #define PI   3.141592653589793
 #define IPI  0.318309886183791
 #define IPI2 0.159154943091895
@@ -119,9 +138,9 @@ string fragment = q{#version 330 core
 in vec2 frag_coord;
 out vec4 frag_colour;
 
-uniform sampler2D u_texture_0;
-uniform sampler2D u_texture_1;
-uniform sampler2D u_texture_2;
+layout(location=0) uniform sampler2D u_texture_0;
+layout(location=1) uniform sampler2D u_texture_1;
+layout(location=2) uniform sampler2D u_texture_2;
 uniform float3 boid_ori[BOID_AMT];
 uniform float3 boid_dir[BOID_AMT];
 uniform float3 boid_ori_mass;
@@ -220,7 +239,7 @@ float noise1 ( float3 x ) {
   float3 df = 30.0*f*f*(f*(f-2.0)+1.0);
   f = f*f*f*(f*(f*6.-15.)+10.);
   float2 uv = (p.xy + float2(37.0f, 17.0f)*p.z) + f.x;
-  float2 rg = textureLod(u_texture_0, (uv+1.1f)/1024.0f, 0.0f).yx+df.xz/10.0f;
+  float2 rg = textureLod(u_texture_2, (uv+1.1f)/1024.0f, 0.0f).yx+df.xz/10.0f;
   return mix(rg.x, rg.y, f.z);
 }
 
@@ -260,10 +279,10 @@ float Pattern ( sampler2D sampler, in float2 uv, out float2 q, out float2 r ){
 }
 
 float Terrain ( in float2 p ) {
-  float th = smoothstep(0.0f, 1.0f, texture(u_texture_1, 0.001f*p, 0.0f).x);
+  float th = smoothstep(0.0f, 1.0f, texture(u_texture_2, 0.001f*p, 0.0f).x);
   float rr = smoothstep(0.1f, 0.5f, texture(u_texture_1, 0.003f*p, 0.0f).y);
   float h = 0.0f;
-  h -= (2.5f*rr);
+  h -= (4.5f*rr);
   h += (th*7.0f);
   return -h;
 }
@@ -346,14 +365,14 @@ float2 Map ( float3 o ) {
     q.xz = mod(q.xz+hs, 150.0f) - hs;
     opRotate(q.xy, fract(sin(id.x*358.23f)*2392.0f));
     opRotate(q.xz, fract(sin(id.x*358.23f)*2392.0f));
-    dist = sdBox(q, float3(8.0f, 128.0f, 8.0f));
+    dist = sdBox(q, float3(8.0f, 8.0f, 8.0f));
     Union(dmin, dist*0.5f, 4.0f);
   }
   // boids
-  for ( int i = 1; i != BOID_AMT; ++ i ) {
-    float3 p = boid_ori[i]+o;
-    Union(dmin, Boid_Model(boid_ori[i]+o, boid_dir[i]), 2.0f);
-  }
+  // for ( int i = 1; i != BOID_AMT; ++ i ) {
+  //   float3 p = boid_ori[i]+o;
+  //   Union(dmin, Boid_Model(boid_ori[i]+o, boid_dir[i]), 2.0f);
+  // }
   // water
   float water_disp = sin(o.z*0.1f+u_time*0.2f)*0.4f - cos(o.x*0.2f+u_time)*0.1f;
   Union(dmin, (abs(o.y+4.1f-water_disp)-0.0001f*0.5f)*0.5f, 3.0f);
@@ -405,7 +424,7 @@ float3 Shade_Heightfield ( float3 O, float3 N, float3 wi, float3 sha,
   // --- colours / fbm ---
   float3 diff = float3(0.529f, 0.356f, 0.005f)*0.05f*IPI;
   float2 fq, fr;
-  float pattern = Pattern(u_texture_1, O.xz*2.2f, fq, fr);
+  float pattern = Pattern(u_texture_0, O.xz*2.2f, fq, fr);
   diff += float3(0.0f, 0.1f, 0.0f)*dot(fq.yx, fr.xy*pattern)*0.2f*IPI;
   diff += float3(0.0f, 0.05f, 0.1f)*dot(hash(O.x*0.3f)*fq.xyy*pattern,
                                              fr.yxx-pattern)*0.3f*IPI;
@@ -514,15 +533,15 @@ void main (  ){
   float3 eye_target;
   float fov = 1.5f;
 
-  // eye_target = float3(Sun_dir.x, -1.5f, Sun_dir.z)*2.0f + eye_ori;
-  // eye_ori.x += (u_time)*-16.0f;
-  // eye_ori.y += sin(u_time)*4.0f;
-  // eye_ori.z += (u_time)*-16.0f;
+  eye_target = float3(Sun_dir.x, -1.5f, Sun_dir.z)*2.0f + eye_ori;
+  eye_ori.x += sin(u_time)*-16.0f;
+  eye_ori.y += sin(u_time)*4.0f;
+  eye_ori.z += cos(u_time)*-16.0f;
 
-    eye_ori *= (2.0f+u_cam_range)*0.002f;
-    fov += clamp(u_cam_range*0.1f, 0.0f, 3.0f);
-    eye_ori = eye_ori - boid_ori_mass;
-    eye_target = -boid_ori_mass;
+    // eye_ori *= (2.0f+u_cam_range)*0.002f;
+    // fov += clamp(u_cam_range*0.1f, 0.0f, 3.0f);
+    // eye_ori = eye_ori - boid_ori_mass;
+    // eye_target = -boid_ori_mass;
 
   eye_ori.y = max(eye_ori.y, -1.0f);
   Ray eye = Look_At(uv, eye_ori, eye_target,
@@ -564,7 +583,7 @@ void main (  ){
   float3 fog_colour = mix(float3(0.2f, 0.2f, 0.6f),
                           float3(1.0f, 0.9f, 0.7f), pow(sun_amount, 8.0f));
   // keylight
-  // col += 
+  // col += fog_colour;
   // col = mix(col, fog_colour, fog_amount);
   frag_colour.xyz = pow(col, float3(1.0f/2.22f));
 }

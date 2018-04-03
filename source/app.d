@@ -5,8 +5,8 @@ static import boidsim;
 static import render;
 
 GLFWwindow* window;
-int window_width = 320, window_height = 240;
-// int window_width = 640, window_height = 480;
+// int window_width = 320, window_height = 240;
+int window_width = 640, window_height = 480;
 // int window_width = 1440, window_height = 1080;
 
 void main ( ) {
