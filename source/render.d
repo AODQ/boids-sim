@@ -178,25 +178,40 @@ float2 March ( Ray ray ) {
   return float2(dist, cur.y);
 }
 
+// My first attempt at AO marching/accumulation
 float AO_March ( float3 ro, float3 rd ) {
-  ro += rd*0.10f;
+  ro += rd*0.13f;
   float dist = 0.0f;
   float cur;
   for ( int i = 0; i != 16; ++ i ) {
     cur = Map(ro + rd*dist).x;
-    if ( cur <= 0.01f || dist > 4.0f ) break;
+    if ( cur <= 0.01f || dist > 128.0f ) break;
     dist += cur;
   }
-  if ( dist > 4.0f ) return 1.0f;
-  return dist/16.0f;
+  if ( dist > 128.0f ) return 1.0f;
+  return dist/128.0f;
 }
 
+// popular form seen on shadertoy
+// float AO_March ( float3 ro, float3 rd ) {
+//   float step = 8.0f;
+//   float ao = 0.0f;
+//   float dist;
+//   for ( int i = 1; i <= 3; ++ i ) {
+//     dist = step*float(i);
+//     ao += max(0.0f, (dist-Map(ro+rs*dist).x)/dist);
+//   }
+//   return 1.0f-ao*0.1f;
+// }
+
 /// just a cheap guess at AO
-float Ambient_Occlusion ( float3 o ) {
+float Ambient_Occlusion ( float3 o, float3 N ) {
   float2 e = float2(1.0f, -1.0f);
-  return (
-    AO_March(o, float3(0.0f, 1.0f, 0.0f)) +
-    AO_March(o, normalize(float3(0.1f, -1.0f, 0.2f)))
+  return 1.0f-(
+      AO_March(o, N+float3(-0.3f))
+    + AO_March(o, N+float3(0.3f))
+    + AO_March(o, N+float3(0.3f, 0.0f, 0.3f))
+    + AO_March(o, N+float3(-0.3f, 0.0f, -0.3f))
   );
 }
 
@@ -219,7 +234,6 @@ float3 Normal ( float3 o, float t ) {
   );
 }
 
-/// heightmap more or less from IQ's Canyon
 float4 texture_good(sampler2D sampler, float2 uv, float lo ) {
   uv = uv*1024.0f - 0.5f;
   float2 iuv = floor(uv);
@@ -232,16 +246,16 @@ float4 texture_good(sampler2D sampler, float2 uv, float lo ) {
   return mix( mix(rg1,rg2,f.x), mix(rg3,rg4,f.x), f.y );
 }
 
-float noise1 ( float3 x ) {
-  float3 p = floor(x);
-  float3 f = fract(x);
-  // quintic
-  float3 df = 30.0*f*f*(f*(f-2.0)+1.0);
-  f = f*f*f*(f*(f*6.-15.)+10.);
-  float2 uv = (p.xy + float2(37.0f, 17.0f)*p.z) + f.x;
-  float2 rg = textureLod(u_texture_2, (uv+1.1f)/1024.0f, 0.0f).yx+df.xz/10.0f;
-  return mix(rg.x, rg.y, f.z);
-}
+// float noise1 ( float3 x ) {
+//   float3 p = floor(x);
+//   float3 f = fract(x);
+//   // quintic
+//   float3 df = 30.0*f*f*(f*(f-2.0)+1.0);
+//   f = f*f*f*(f*(f*6.-15.)+10.);
+//   float2 uv = (p.xy + float2(37.0f, 17.0f)*p.z) + f.x;
+//   float2 rg = textureLod(u_texture_2, (uv+1.1f)/1024.0f, 0.0f).yx+df.xz/10.0f;
+//   return mix(rg.x, rg.y, f.z);
+// }
 
 const mat3 m = mat3(0.0f, 0.8f, 0.6f,
                     -0.8f, 0.36f, -0.48f,
@@ -255,36 +269,73 @@ float Displacement ( float3 p ) {
   return f;
 }
 
-float Noise1 ( sampler2D sampler, float2 uv ) {
-  return sin(uv.x*1.3f) + sin(uv.y*1.6f);
+// noise from Morgan McGuire
+//https://www.shadertoy.com/view/4dS3Wd
+float hash(float n) { return fract(sin(n)*1000.0f); }
+float hash(float2 p) {
+  return fract(1000.0f*sin(17.0f*p.x+p.y*0.1f)*(0.1f+abs(sin(p.y*13.0f+p.x))));
 }
+
+float noise(float x) {
+  float i = floor(x), f = fract(x);
+  // use quintic instead of cubic that's in the reference implementation
+  float u = f*f*f*(f*(f*6.-15.)+10.0f);
+  return mix(hash(i), hash(i+1.0f), u);
+}
+
+float noise(sampler2D sampler, float2 x) {
+  float2 i = floor(x), f = fract(x);
+
+  // return texture(_texture_2, (i+float2(118.4f)/256.0f)).x;
+  float a = texture(sampler, (i+float2(0.5f, 0.5f))/1024.0f).x;
+  float b = texture(sampler, (i+float2(1.5f, 0.5f))/1024.0f).y;
+  float c = texture(sampler, (i+float2(0.5f, 1.5f))/1024.0f).z;
+  float d = texture(sampler, (i+float2(1.5f, 1.5f))/1024.0f).x;
+
+  // 2D lerp using smoothstep between the values
+  /*
+    return float3(mix(mix(a, b, smoothstep(0.0f, 1.0f, f.x)),
+                      mix(c, d, smoothstep(0.0f, 1.0f, f.x)),
+                      smoothstep(0.0f, 1.0f, f.y)));
+  */
+  // The following code is the same but optimized, and also quintic instead of
+  // the cubic that's in the reference implementation
+  float2 u = f*f*f*(f*(f*6.-15.)+10.0f);
+  // float2 u = f*f*(3.0f-2.0f*f);
+  return mix(a, b, u.x) + (c-a)*u.y*(1.0f-u.x) + (d-b)*u.x*u.y;
+}
+
+
 
 float FBM ( sampler2D sampler, in float2 uv ) {
   const mat2 m = mat2(0.8, 0.6, -0.6, 0.8);
   float f = 0.0;
-  f += 0.500000*(0.5 + 0.5*Noise1(sampler, uv)); uv = m*uv*2.02;
-  f += 0.250000*(0.5 + 0.5*Noise1(sampler, uv)); uv = m*uv*2.03;
-  f += 0.125000*(0.5 + 0.5*Noise1(sampler, uv)); uv = m*uv*2.01;
-  f += 0.062500*(0.5 + 0.5*Noise1(sampler, uv)); uv = m*uv*2.04;
-  f += 0.031250*(0.5 + 0.5*Noise1(sampler, uv));
+  f += 0.500000*(0.5 + 0.5*noise(sampler, uv)); uv = m*uv*2.02;
+  f += 0.250000*(0.5 + 0.5*noise(sampler, uv)); uv = m*uv*2.03;
+  f += 0.125000*(0.5 + 0.5*noise(sampler, uv)); uv = m*uv*2.01;
+  f += 0.062500*(0.5 + 0.5*noise(sampler, uv)); uv = m*uv*2.04;
+  f += 0.031250*(0.5 + 0.5*noise(sampler, uv));
   return f/0.9375;
 }
 
 float Pattern ( sampler2D sampler, in float2 uv, out float2 q, out float2 r ){
   q = float2(FBM(sampler, uv + float2(0.0, 0.2f)),
-              FBM(sampler, uv + float2(4.2, 2.1f)));
+             FBM(sampler, uv + float2(4.2, 2.1f)));
   r = float2(FBM(sampler, uv + 4.0*q + float2(1.6, 0.2)),
-              FBM(sampler, uv + 4.0*q + float2(0.3, 1.3f)));
+             FBM(sampler, uv + 4.0*q + float2(0.3, 1.3f)));
   return FBM(sampler, uv+q-r*0.25);
 }
 
 float Terrain ( in float2 p ) {
-  float th = smoothstep(0.0f, 1.0f, texture(u_texture_2, 0.001f*p, 0.0f).x);
-  float rr = smoothstep(0.1f, 0.5f, texture(u_texture_1, 0.003f*p, 0.0f).y);
-  float h = 0.0f;
-  h -= (4.5f*rr);
-  h += (th*7.0f);
-  return -h;
+  float height = smoothstep(0.0f, 0.9f, noise(u_texture_2, p*0.2f));
+  float reduce = noise(u_texture_2, p.yx*0.5f);
+  // float reduce = length(texture(u_texture_1, 0.005f*p, 0.0f));
+  reduce = smoothstep(0.0f, 1.3f, reduce);
+  return -height*7.0f + reduce*7.0f;
+  // float h = 0.0f;
+  // // h -= (4.5f*rr);
+  // h += (th*7.0f);
+  // return -h;
 }
 
 void opRotate(inout float2 p, float a) {
@@ -345,7 +396,7 @@ float2 Map ( float3 o ) {
   float height = Terrain(o.xz*0.15f);
   float dis = Displacement(0.15f*o*float3(1.0f, 4.0f, 1.2f))*3.0f;
   float2 dmin = float2(999.0f);
-  dmin = float2((dis + o.y-height)*0.25f, 1.0f);
+  dmin = float2((o.y-height)*0.25f, 1.0f);
   { // shitty idk
     float3 q = o;
     float2 size = float2(100.0f, 30.0f);
@@ -366,7 +417,7 @@ float2 Map ( float3 o ) {
     opRotate(q.xy, fract(sin(id.x*358.23f)*2392.0f));
     opRotate(q.xz, fract(sin(id.x*358.23f)*2392.0f));
     dist = sdBox(q, float3(8.0f, 8.0f, 8.0f));
-    Union(dmin, dist*0.5f, 4.0f);
+    // Union(dmin, dist*0.5f, 4.0f);
   }
   // boids
   // for ( int i = 1; i != BOID_AMT; ++ i ) {
@@ -380,7 +431,8 @@ float2 Map ( float3 o ) {
 }
 
 const float3 Sun_dir = normalize(float3(-0.2f, -0.05f, -0.2f));
-const float3 Sun_col = float3(1.0f, 1.0f, 0.868f);
+const float3 Sun_col = float3(0.292f, 0.13f, 0.510f);
+const float Sun_pow = 40.0f;
 const float3 Sun_dif = pow(Sun_col*40.0f, float3(1.2f, 1.0f, 1.4f));
 
 float3 Cubemap(float3 dir) {
@@ -415,25 +467,23 @@ float GGX ( float dot_nv, float alpha ) {
 }
 
 
-float hash ( float t ) {
-  return fract(sin(t*9372.342432f)*89157453.034813f);
-}
-
 float3 Shade_Heightfield ( float3 O, float3 N, float3 wi, float3 sha,
                             float2 info ) {
   // --- colours / fbm ---
-  float3 diff = float3(0.529f, 0.356f, 0.005f)*0.05f*IPI;
+  float3 diff = float3(0.941f, 0.902f, 0.549f)*0.2f*IPI;
   float2 fq, fr;
-  float pattern = Pattern(u_texture_0, O.xz*2.2f, fq, fr);
-  diff += float3(0.0f, 0.1f, 0.0f)*dot(fq.yx, fr.xy*pattern)*0.2f*IPI;
-  diff += float3(0.0f, 0.05f, 0.1f)*dot(hash(O.x*0.3f)*fq.xyy*pattern,
-                                             fr.yxx-pattern)*0.3f*IPI;
+  float pattern = Pattern(u_texture_0, O.xz*1.0f, fq, fr);
+  diff += float3(0.2f, 0.3f, 0.6f)*8.2f*
+            pow(dot(fq.xyy, fr.yyx)*pattern*fr.y*fr.x*fq.x, 2.2f)*9.0f*IPI;
+  diff += float3(0.0f, 0.5f, 0.4f)*4.2f*
+            dot(fq.xyy*pattern, fr.yxx-pattern)*1.3f*IPI;
+  diff *= 0.10f;
   float3 sun, ambient;
   float3 H;
   // sun
   float tsh = saturate(dot(N, float3(Sun_dir)));
   H = normalize(wi+Sun_dir);
-  sun = tsh*diff*float3(1.1f, 1.2f, 1.3f)*Sun_dif;
+  sun = diff*tsh*Sun_dif;
   sun += (float3(1.0f)
           * (Fresnel(1.5f, Sun_dir, H) + Fresnel(1.5f, wi, H))
           * pow(max(0.0f, dot(N, H)), 5.0f)*((7.0f)/(TAU))
@@ -444,11 +494,10 @@ float3 Shade_Heightfield ( float3 O, float3 N, float3 wi, float3 sha,
   float3 refl = float3(0.0f, 1.0f, 0.0f);
   // cubemap
   H = normalize(wi+refl);
-  ambient += diff*pow(Cubemap(refl), float3(0.8f))*1.05f;
+  ambient += diff*Cubemap(refl)*5.05f;
   // ambient occlusion
-  ambient *= Ambient_Occlusion(O);
-  return (sun*sha*5.0f+ambient*1.2f);
-  // return clamp(dot(N, Sun_dir), 0.0f, 1.0f)*diff;
+  ambient *= Ambient_Occlusion(O, N);
+  return (sun*2.0f*sha+ambient*16.2f*(sha+0.012f));
 }
 
 float3 RWater_Sun (  float3 O, float3 N, float3 wi, float3 sha ) {
@@ -480,13 +529,13 @@ float3 Shade_Mirror ( float3 O, float3 N, float3 wi, float3 sha, float2 info ) {
   float3 wo = normalize(Sun_dir);
   float3 refl = reflect(-wi, N);
   float tsh = saturate(dot(N, float3(Sun_dir)));
-  return Ambient_Occlusion(O)*float3(0.05f, 0.05f, 0.2f)*
+  return Ambient_Occlusion(O, N)*float3(0.05f, 0.05f, 0.2f)*
          pow(Cubemap(refl), float3(0.8f));
 }
 
 float3 Shade_Water ( float3 O, float3 N, float3 wi, float3 sha,
                             float2 info ) {
-  float3 col = float3(0.1f, 0.1f, 0.1f)*IPI;
+  float3 col = float3(0.1f, 0.1f, 0.3f)*IPI;
   float3 sun = RWater_Sun(O, N, wi, sha);
   wi *= -1.0f;
   // refraction
@@ -508,13 +557,13 @@ float3 Shade_Water ( float3 O, float3 N, float3 wi, float3 sha,
       spec += Shade_Heightfield(O, N, refl, sha, res);
     if ( res.y == 2.0f )
       spec += Shade_Boid(O, N, refl, sha, res);
-  } else spec += Cubemap(float3(refl.x, refl.y, refl.z))*0.01f;
-  return (sun*sha+spec);
+  } else spec += Cubemap(float3(refl.x, refl.y, refl.z))*0.001f;
+  return (sun*sha*col+spec*col);
 }
 
 float3 Soft_Shadow ( Ray ray ) {
   float res = 1.0f;
-  for ( float t = 0.1f; t < 4.0f; ) {
+  for ( float t = 0.1f; t < 8.0f; ) {
     float h = Map(ray.ori + ray.dir*t).x;
     if ( h < 0.001f ) return float3(0.00f);
     res = min(res, 2.0f*h/t);
@@ -562,19 +611,9 @@ void main (  ){
   float3 col = float3(0.0f);
   wi *= -1.0f;
   if ( ID == 1.0f ) col = Shade_Heightfield(O, N, wi, sun_sha, res);
-  if ( ID == 2.0f ) col = Shade_Boid(O, N, wi, sun_sha, res);
+  // if ( ID == 2.0f ) col = Shade_Boid(O, N, wi, sun_sha, res);
   if ( ID == 3.0f ) col = Shade_Water(O, N, wi, sun_sha, res);
   if ( ID == 4.0f ) col = Shade_Mirror(O, N, wi, sun_sha, res);
-  // soft shadow
-  // col *= sun_sha;
-  // col = mix(col, pow(float3(sun_sha), float3(1.0f, 1.2f, 1.5f)), 0.8f);
-  // // star
-  // float3 L = float3(boid_ori_mass.x, 8.0f, boid_ori_mass.z+2.0f);
-  // float3 wo = normalize(L - O);
-  // col += float3(0.6f, 0.7f, 0.8f)*dot(N, wo);
-  // // sky
-  // float3 refl = reflect(wi, N);
-  // col += float3(0.6f, 0.7f, 0.8f)*Cubemap(refl)*0.5f;
 
   // purple fog
   float fog_amount = 1.0f - exp(-dist*0.03f);
